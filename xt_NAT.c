@@ -1009,7 +1009,7 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
 
             skb_set_transport_header(skb, ip->ihl * 4);
             tcp = (struct tcphdr *)skb_transport_header(skb);
-            skb_reset_transport_header(skb);
+            //skb_reset_transport_header(skb);
 
             if (unlikely(skb_shinfo(skb)->nr_frags > 1 && skb_headlen(skb) == sizeof(struct iphdr))) {
                 frag = &skb_shinfo(skb)->frags[0];
@@ -1032,6 +1032,7 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
             session = lookup_session(ht_outer, ip->protocol, ip->daddr, tcp->dest);
             if (likely(session)) {
                 //printk(KERN_DEBUG "xt_NAT DNAT: found session for src ip = %pI4 and src port = %d and nat port = %d\n", &session->data->in_addr, ntohs(session->data->in_port), ntohs(tcp->dest));
+                skb_reset_transport_header(skb);
                 csum_replace4(&ip->check, ip->daddr, session->data->in_addr);
                 inet_proto_csum_replace4(&tcp->check, skb, ip->daddr, session->data->in_addr, true);
                 inet_proto_csum_replace2(&tcp->check, skb, tcp->dest, session->data->in_port, true);
@@ -1091,7 +1092,7 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
 
             skb_set_transport_header(skb, ip->ihl * 4);
             udp = (struct udphdr *)skb_transport_header(skb);
-            skb_reset_transport_header(skb);
+            //skb_reset_transport_header(skb);
 
             if (unlikely(skb_shinfo(skb)->nr_frags > 1 && skb_headlen(skb) == sizeof(struct iphdr))) {
                 frag = &skb_shinfo(skb)->frags[0];
@@ -1113,6 +1114,7 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
             rcu_read_lock_bh();
             session = lookup_session(ht_outer, ip->protocol, ip->daddr, udp->dest);
             if (likely(session)) {
+                skb_reset_transport_header(skb);
                 //printk(KERN_DEBUG "xt_NAT DNAT: found session for src ip = %pI4 and src port = %d and nat port = %d\n", &session->data->in_addr, ntohs(session->data->in_port), ntohs(udp->dest));
                 csum_replace4(&ip->check, ip->daddr, session->data->in_addr);
                 if (udp->check) {
