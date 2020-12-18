@@ -545,8 +545,12 @@ static void netflow_sendmsg(void *buffer, const int len)
 
 static void netflow_export_pdu_v5(void)
 {
-    struct timeval tv;
     int pdusize;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+    struct timespec64 ts;
+#else
+    struct timeval tv;
+#endif
 
     //printk(KERN_DEBUG "xt_NAT NEL: Forming PDU seq %d, %d records\n", pdu_seq, pdu_data_records);
 
@@ -556,9 +560,15 @@ static void netflow_export_pdu_v5(void)
     pdu.version		= htons(5);
     pdu.nr_records	= htons(pdu_data_records);
     pdu.ts_uptime	= htonl(jiffies_to_msecs(jiffies));
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+    ktime_get_real_ts64(&ts);
+    pdu.ts_usecs	= htonl(ts.tv_sec);
+    pdu.ts_unsecs	= htonl(ts.tv_nsec/1000);
+#else
     do_gettimeofday(&tv);
-    pdu.ts_usecs		= htonl(tv.tv_sec);
+    pdu.ts_usecs	= htonl(tv.tv_sec);
     pdu.ts_unsecs	= htonl(tv.tv_usec);
+#endif
     pdu.seq		= htonl(pdu_seq);
     //pdu.v5.eng_type	= 0;
     pdu.eng_id		= (__u8)engine_id;
@@ -999,7 +1009,7 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
 
             skb_set_transport_header(skb, ip->ihl * 4);
             tcp = (struct tcphdr *)skb_transport_header(skb);
-            skb_reset_transport_header(skb);
+            //skb_reset_transport_header(skb);
 
             if (unlikely(skb_shinfo(skb)->nr_frags > 1 && skb_headlen(skb) == sizeof(struct iphdr))) {
                 frag = &skb_shinfo(skb)->frags[0];
@@ -1022,6 +1032,7 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
             session = lookup_session(ht_outer, ip->protocol, ip->daddr, tcp->dest);
             if (likely(session)) {
                 //printk(KERN_DEBUG "xt_NAT DNAT: found session for src ip = %pI4 and src port = %d and nat port = %d\n", &session->data->in_addr, ntohs(session->data->in_port), ntohs(tcp->dest));
+                skb_reset_transport_header(skb);
                 csum_replace4(&ip->check, ip->daddr, session->data->in_addr);
                 inet_proto_csum_replace4(&tcp->check, skb, ip->daddr, session->data->in_addr, true);
                 inet_proto_csum_replace2(&tcp->check, skb, tcp->dest, session->data->in_port, true);
@@ -1081,7 +1092,7 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
 
             skb_set_transport_header(skb, ip->ihl * 4);
             udp = (struct udphdr *)skb_transport_header(skb);
-            skb_reset_transport_header(skb);
+            //skb_reset_transport_header(skb);
 
             if (unlikely(skb_shinfo(skb)->nr_frags > 1 && skb_headlen(skb) == sizeof(struct iphdr))) {
                 frag = &skb_shinfo(skb)->frags[0];
@@ -1103,6 +1114,7 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
             rcu_read_lock_bh();
             session = lookup_session(ht_outer, ip->protocol, ip->daddr, udp->dest);
             if (likely(session)) {
+                skb_reset_transport_header(skb);
                 //printk(KERN_DEBUG "xt_NAT DNAT: found session for src ip = %pI4 and src port = %d and nat port = %d\n", &session->data->in_addr, ntohs(session->data->in_port), ntohs(udp->dest));
                 csum_replace4(&ip->check, ip->daddr, session->data->in_addr);
                 if (udp->check) {
@@ -1322,7 +1334,11 @@ nat_tg(struct sk_buff *skb, const struct xt_action_param *par)
     return NF_ACCEPT;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+void users_cleanup_timer_callback( struct timer_list *timer )
+#else
 void users_cleanup_timer_callback( unsigned long data )
+#endif
 {
     struct user_htable_ent *user;
     struct hlist_head *head;
@@ -1372,7 +1388,11 @@ void users_cleanup_timer_callback( unsigned long data )
     spin_unlock_bh(&users_timer_lock);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+void sessions_cleanup_timer_callback( struct timer_list *timer )
+#else
 void sessions_cleanup_timer_callback( unsigned long data )
+#endif
 {
     struct nat_htable_ent *session;
     struct hlist_head *head;
@@ -1441,7 +1461,11 @@ void sessions_cleanup_timer_callback( unsigned long data )
     spin_unlock_bh(&sessions_timer_lock);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+void nf_send_timer_callback( struct timer_list *timer )
+#else
 void nf_send_timer_callback( unsigned long data )
+#endif
 {
     spin_lock_bh(&nfsend_lock);
     //printk(KERN_DEBUG "xt_NAT TIMER: Exporting netflow by timer\n");
@@ -1544,13 +1568,13 @@ static const struct file_operations users_seq_fops = {
 
 static int stat_seq_show(struct seq_file *m, void *v)
 {
-    seq_printf(m, "Active NAT sessions: %ld\n", atomic64_read(&sessions_active));
-    seq_printf(m, "Tried NAT sessions: %ld\n", atomic64_read(&sessions_tried));
-    seq_printf(m, "Created NAT sessions: %ld\n", atomic64_read(&sessions_created));
-    seq_printf(m, "DNAT dropped pkts: %ld\n", atomic64_read(&dnat_dropped));
-    seq_printf(m, "Fragmented pkts: %ld\n", atomic64_read(&frags));
-    seq_printf(m, "Related ICMP pkts: %ld\n", atomic64_read(&related_icmp));
-    seq_printf(m, "Active Users: %ld\n", atomic64_read(&users_active));
+    seq_printf(m, "Active NAT sessions: %lld\n", (u64)atomic64_read(&sessions_active));
+    seq_printf(m, "Tried NAT sessions: %lld\n", (u64)atomic64_read(&sessions_tried));
+    seq_printf(m, "Created NAT sessions: %lld\n", (u64)atomic64_read(&sessions_created));
+    seq_printf(m, "DNAT dropped pkts: %lld\n", (u64)atomic64_read(&dnat_dropped));
+    seq_printf(m, "Fragmented pkts: %lld\n", (u64)atomic64_read(&frags));
+    seq_printf(m, "Related ICMP pkts: %lld\n", (u64)atomic64_read(&related_icmp));
+    seq_printf(m, "Active Users: %lld\n", (u64)atomic64_read(&users_active));
 
     return 0;
 }
@@ -1661,17 +1685,30 @@ static int __init nat_tg_init(void)
     proc_create("statistics", 0644, proc_net_nat, &stat_seq_fops);
 
     spin_lock_bh(&sessions_timer_lock);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+    timer_setup( &sessions_cleanup_timer, sessions_cleanup_timer_callback, 0 );
+#else
     setup_timer( &sessions_cleanup_timer, sessions_cleanup_timer_callback, 0 );
+#endif
     mod_timer( &sessions_cleanup_timer, jiffies + msecs_to_jiffies(10 * 1000) );
     spin_unlock_bh(&sessions_timer_lock);
 
     spin_lock_bh(&users_timer_lock);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+    timer_setup( &users_cleanup_timer, users_cleanup_timer_callback, 0 );
+#else
     setup_timer( &users_cleanup_timer, users_cleanup_timer_callback, 0 );
+#endif
     mod_timer( &users_cleanup_timer, jiffies + msecs_to_jiffies(60 * 1000) );
     spin_unlock_bh(&users_timer_lock);
 
     spin_lock_bh(&nfsend_lock);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+    timer_setup( &nf_send_timer, nf_send_timer_callback, 0 );
+#else
     setup_timer( &nf_send_timer, nf_send_timer_callback, 0 );
+#endif
     mod_timer( &nf_send_timer, jiffies + msecs_to_jiffies(1000) );
     spin_unlock_bh(&nfsend_lock);
 
